@@ -35,7 +35,9 @@
 
   /* ---------- 数字の入力 ----------
    * type="number" は全角数字やカンマを受け付けず、入力途中の値が空になるため
-   * 普通のテキスト欄にして、打った内容をその場で半角数字へ整える。
+   * 普通のテキスト欄にして、欄の文字から数字を読み取って計算する。
+   * 打っている最中に欄の文字を書き換えると日本語入力やスマホのキーボードが
+   * 誤動作するので、見た目（半角・カンマ）を整えるのは欄を離れたときだけ。
    */
   const toHalf = s => s
     .replace(/[０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xfee0))
@@ -54,34 +56,6 @@
     return Number.isFinite(n) ? n : null;
   };
   const fmtValue = (n, kind) => (kind === 'int' ? addCommas(String(Math.trunc(n))) : String(n));
-
-  // 整形後の文字列で、数字 n 文字目の直後にあたる位置を返す
-  function caretIndex(formatted, n) {
-    let seen = 0;
-    for (let i = 0; i < formatted.length; i++) {
-      if (seen >= n) return i;
-      if (formatted[i] !== ',') seen++;
-    }
-    return formatted.length;
-  }
-
-  // 表示を整える（全角→半角・カンマ付け）。カーソル位置は保つ
-  function normalizeInput(el) {
-    const kind = el.dataset.num;
-    const raw = el.value;
-    const clean = cleanFor(raw, kind);
-    const formatted = kind === 'int' ? addCommas(clean) : clean;
-    if (formatted !== raw) {
-      const caret = el.selectionStart ?? raw.length;
-      const before = cleanFor(raw.slice(0, caret), kind).length;
-      el.value = formatted;
-      if (document.activeElement === el) {
-        const pos = caretIndex(formatted, before);
-        el.setSelectionRange(pos, pos);
-      }
-    }
-    return clean;
-  }
 
   function setErr(el, msg) {
     el.classList.toggle('invalid', !!msg);
@@ -253,7 +227,7 @@
 
   function onNumInput(el) {
     const field = el.dataset.field;
-    const clean = normalizeInput(el);
+    const clean = cleanFor(el.value, el.dataset.num);
     if (field === 'feeAmount') {
       feeAmount = clean;
       renderOut();
@@ -275,7 +249,12 @@
 
   function onNumBlur(el) {
     const field = el.dataset.field;
-    if (field === 'feeAmount') return;
+    if (field === 'feeAmount') {
+      feeAmount = cleanInt(el.value);
+      el.value = addCommas(feeAmount);
+      renderOut();
+      return;
+    }
     const kind = el.dataset.num;
     const n = parseClean(cleanFor(el.value, kind));
     const err = n === null ? '' : checkField(field, n);
@@ -593,22 +572,27 @@
     }
   });
 
+  // 日本語入力の変換中（未確定）でも、その時点の数字で計算する
   view.addEventListener('input', e => {
-    // 日本語入力の変換中は触らず、確定したときに整える
-    if (e.target.matches('[data-num]') && !e.isComposing) onNumInput(e.target);
+    if (e.target.matches('[data-num]')) onNumInput(e.target);
   });
   view.addEventListener('compositionend', e => {
     if (e.target.matches('[data-num]')) onNumInput(e.target);
   });
-  // タップしたら全選択して、そのまま打ち直せるようにする
+  // タップしたら全選択して、そのまま打ち直せるようにする（iPhoneは select() が効かないことがある）
   view.addEventListener('focusin', e => {
-    if (e.target.matches('[data-num]')) setTimeout(() => e.target.select(), 0);
+    const el = e.target;
+    if (!el.matches('[data-num]')) return;
+    setTimeout(() => {
+      if (document.activeElement === el) el.setSelectionRange(0, el.value.length);
+    }, 0);
   });
   view.addEventListener('focusout', e => {
     if (e.target.matches('[data-num]')) onNumBlur(e.target);
   });
   view.addEventListener('keydown', e => {
-    if (e.key === 'Enter' && e.target.matches('[data-num]')) e.target.blur();
+    // 変換を確定するEnter（isComposing または keyCode 229）では欄を離れない
+    if (e.key === 'Enter' && !e.isComposing && e.keyCode !== 229 && e.target.matches('[data-num]')) e.target.blur();
   });
 
   document.addEventListener('visibilitychange', () => {
