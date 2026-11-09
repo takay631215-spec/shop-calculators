@@ -1,0 +1,10 @@
+{
+  "name": "くらま出店者の計算機",
+  "short_name": "計算機",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f7f8fa",
+  "theme_color": "#4263a7",
+  "lang": "ja"
+}

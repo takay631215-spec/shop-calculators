@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#4263a7">
+  <meta name="description" content="くらしのマーケット出店者向けの無料計算機。手取り・キャンセル率・口コミ率・星評価をかんたん管理。">
+  <title>くらま出店者の計算機</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <button id="home" class="iconbtn" type="button" aria-label="ホームに戻る" hidden>‹</button>
+      <div>
+        <h1 id="heading">くらま出店者の計算機</h1>
+        <p id="subhead">数字を入れるだけ。登録不要・端末内保存</p>
+      </div>
+      <button id="settingsBtn" class="iconbtn" type="button" aria-label="設定">⚙</button>
+    </header>
+    <main id="view"></main>
+    <footer>入力したデータはこの端末内に保存されます。<br>サービスの公式集計・請求額と異なる場合があります。</footer>
+  </div>
+  <div id="toast" role="status" aria-live="polite"></div>
+  <script src="calc.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
