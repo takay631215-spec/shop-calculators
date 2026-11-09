@@ -24,6 +24,10 @@
   /* ---------- 小さな関数 ---------- */
   const pad2 = n => String(n).padStart(2, '0');
   const ymKey = (y, m) => `${y}-${pad2(m)}`;
+  const currentKey = () => {
+    const now = new Date();
+    return ymKey(now.getFullYear(), now.getMonth() + 1);
+  };
   const numOr = (v, fb) => (v === '' || v == null || !Number.isFinite(Number(v)) ? fb : Number(v));
   const clamp = (n, lo, hi) => Math.min(hi, Math.max(lo, n));
   const toCount = v => Math.max(0, Math.floor(numOr(v, 0)));
@@ -168,6 +172,7 @@
 
   let state = loadState();
   let feeAmount = ''; // 金額は計算にだけ使い、保存しない
+  let lastQuick = null; // ホームの「今日の記録」を1回分取り消すための控え
   let toastTimer = 0;
 
   function toast(msg) {
@@ -368,9 +373,76 @@
     });
   }
 
+  function dashHtml() {
+    return feeDash() + monthDash(true) + monthDash(false) + ratingDash();
+  }
+
+  function quickCard() {
+    const month = Number(currentKey().slice(5));
+    return card('今日の記録', `
+      <p class="hint quick-lead">${month}月の件数に1タップで追加します。</p>
+      <div class="quick-row">
+        <button type="button" class="quick-btn" data-quick="work">作業 ＋1</button>
+        <button type="button" class="quick-btn" data-quick="cancel">キャンセル ＋1</button>
+      </div>
+      <p class="hint quick-lead">口コミが届いたら星の数をタップ（口コミ件数と星別件数を同時に＋1）</p>
+      <div class="quick-stars">${[5, 4, 3, 2, 1].map(star => `<button type="button" class="quick-btn" data-quick="star${star}" aria-label="星${star}の口コミを1件追加">★${star}</button>`).join('')}</div>
+      <p class="quick-msg" role="status" hidden><span></span><button type="button" data-action="undo">取り消す</button></p>`);
+  }
+
+  function showQuickMsg(text) {
+    const box = $('.quick-msg');
+    if (!box) return;
+    box.firstElementChild.textContent = text;
+    box.hidden = !text;
+  }
+
+  // 作業・キャンセル・口コミを、画面を移動せず今月に＋1する
+  function quickAdd(kind) {
+    const key = currentKey();
+    const saved = state.months[key];
+    lastQuick = { key, month: saved ? { ...saved } : null, rating: [...state.rating] };
+    const d = CALC.monthCounts(saved);
+    let message;
+    if (kind === 'work') {
+      d.work += 1;
+      message = `作業を追加しました（今月 ${countText(d.work)}）`;
+    } else if (kind === 'cancel') {
+      d.cancel += 1;
+      message = `キャンセルを追加しました（今月 ${countText(d.cancel)}）`;
+    } else {
+      const star = Number(kind.slice(4));
+      state.rating[star - 1] += 1;
+      if (d.review < d.work) {
+        d.review += 1;
+        message = `★${star}の口コミを追加しました（今月 ${countText(d.review)}）`;
+      } else {
+        message = `★${star}を追加しました。口コミ件数は作業件数を超えるので増やしていません`;
+      }
+    }
+    state.months[key] = d;
+    saveState();
+    renderOut();
+    showQuickMsg(message);
+  }
+
+  function undoQuick() {
+    if (!lastQuick) return;
+    const { key, month, rating } = lastQuick;
+    if (month) state.months[key] = month;
+    else delete state.months[key];
+    state.rating = rating;
+    lastQuick = null;
+    saveState();
+    renderOut();
+    showQuickMsg('');
+    toast('取り消しました');
+  }
+
   function homeView() {
     return `
-      <div class="dash">${feeDash()}${monthDash(true)}${monthDash(false)}${ratingDash()}</div>
+      ${quickCard()}
+      <div class="dash" id="dash"></div>
       <p class="hint">カードをタップすると入力画面が開きます。数字はこの端末に保存されます。売上金額は計算だけで履歴に残さず、ページを閉じると消えます。</p>
       ${card('はじめて使う方へ', `
         <p><strong>LINE内のブラウザではなく、Safari・Chromeなどで開いてください。</strong></p>
@@ -393,16 +465,22 @@
       : m === 'ato'
         ? '<p class="hint">ATO後払いの決済手数料4.5％で概算。別途、振込手数料は税抜500円／振込で、1件ごとの計算には含めていません。</p>'
         : '';
+    // 金額のすぐ下に結果を置く（スマホのキーボードが出ていても見えるように）
     return `
-      ${card('計算方法', `
-        ${switchButtons('mode', [['deduct', '手数料を引く'], ['reverse', '希望手取りから逆算']], state.feeMode)}
-        <label class="field" data-wrap>
-          <span>${reverse ? '希望する手取り額（円）' : '請求金額（税込・円）'}</span>
-          ${numInput({ field: 'feeAmount', kind: 'int', text: addCommas(feeAmount) })}
-        </label>
-        <label class="field"><span>支払い方法</span>
-          <select data-pay>${option('base', '通常手数料のみ')}${option('card', 'オンラインカード決済')}${option('ato', '後払い（ATO）')}</select>
-        </label>
+      <section class="card">
+        ${switchButtons('mode', [['deduct', '手数料を引く'], ['reverse', '手取りから逆算']], state.feeMode)}
+        <div class="twocol">
+          <label class="field" data-wrap>
+            <span>${reverse ? '希望する手取り（円）' : '請求金額（税込・円）'}</span>
+            ${numInput({ field: 'feeAmount', kind: 'int', text: addCommas(feeAmount) })}
+          </label>
+          <label class="field"><span>支払い方法</span>
+            <select data-pay>${option('base', '通常のみ')}${option('card', 'カード決済')}${option('ato', '後払い（ATO）')}</select>
+          </label>
+        </div>
+      </section>
+      <div id="fee-out"></div>
+      ${card('手数料の設定', `
         ${methodHint}
         <div class="twocol">
           ${numField({ field: 'feeRate', kind: 'dec', label: 'くらま手数料率（％）', value: state.feeRate })}
@@ -412,8 +490,7 @@
         <h3 class="section-title">消費税の納税分（概算）</h3>
         ${switchButtons('tax', [['off', '考慮しない'], ['on', '考慮する']], state.taxEnabled ? 'on' : 'off')}
         ${state.taxEnabled ? numField({ field: 'taxReserveRate', kind: 'dec', label: '売上に含まれる消費税から確保する割合（％）', value: state.taxReserveRate }) : ''}
-        <p class="hint">確保額＝税込の請求金額 × 10/110 × 設定割合（初期値100％）。仕入税額控除や課税方式を反映していないため、実際の納税額とは異なります。</p>`)}
-      <div id="fee-out"></div>`;
+        <p class="hint">確保額＝税込の請求金額 × 10/110 × 設定割合（初期値100％）。仕入税額控除や課税方式を反映していないため、実際の納税額とは異なります。</p>`)}`;
   }
 
   function feeResult() {
@@ -460,17 +537,15 @@
     const thisYear = new Date().getFullYear();
     const years = [...new Set([...Array.from({ length: 11 }, (_, i) => thisYear - 5 + i), state.year])].sort((a, b) => a - b);
     return `
-      ${card('対象年月', `
+      ${card(`${monthNum}月の件数`, `
         <div class="twocol">
           <label class="field"><span>年</span><select data-ym="year">${years.map(y => `<option value="${y}"${y === state.year ? ' selected' : ''}>${y}年</option>`).join('')}</select></label>
           <label class="field"><span>月</span><select data-ym="month">${Array.from({ length: 12 }, (_, i) => `<option value="${i + 1}"${i + 1 === monthNum ? ' selected' : ''}>${i + 1}月</option>`).join('')}</select></label>
         </div>
-        <p class="hint">過去の月も選択して修正できます。履歴は12か月を超えても保持します。</p>`)}
-      ${card(`${monthNum}月の件数`, `
-        <p class="hint">数字を直接入力するか、＋／−で増減できます。入力内容は自動で保存されます。</p>
         ${countRow('workCount', '作業件数', d.work)}
         ${countRow(isCancel ? 'cancelCount' : 'reviewCount', `${name}件数`, isCancel ? d.cancel : d.review)}
-        ${numField({ field: isCancel ? 'goalCancel' : 'goalReview', kind: 'dec', label: `目標${name}率（％）`, value: state.goals[isCancel ? 'cancel' : 'review'] })}`)}
+        ${numField({ field: isCancel ? 'goalCancel' : 'goalReview', kind: 'dec', label: `目標${name}率（％）`, value: state.goals[isCancel ? 'cancel' : 'review'] })}
+        <p class="hint">直接入力か＋／−で変更でき、自動で保存されます。過去の月も選んで修正できます。</p>`)}
       <div id="month-out"></div>
       <div id="annual-out"></div>`;
   }
@@ -548,6 +623,7 @@
       const el = $(sel);
       if (el) el.innerHTML = html;
     };
+    if (state.page === 'home') set('#dash', dashHtml());
     if (state.page === 'fee') set('#fee-out', feeOut());
     if (state.page === 'cancel' || state.page === 'review') {
       set('#month-out', monthOut());
@@ -569,7 +645,12 @@
 
   function go(page) {
     state.page = page;
-    if (page === 'fee') state.feeMode = 'deduct';
+    lastQuick = null;
+    // ホームの「今月」と入力画面の月を揃える（先月のまま記録してしまうのを防ぐ）
+    if (page === 'cancel' || page === 'review') {
+      state.month = currentKey();
+      state.year = Number(state.month.slice(0, 4));
+    }
     saveState();
     render();
     window.scrollTo(0, 0);
@@ -617,8 +698,10 @@
   view.addEventListener('click', e => {
     const btn = e.target.closest('button');
     if (!btn) return;
-    const { go: page, mode, tax, step, action } = btn.dataset;
+    const { go: page, mode, tax, step, action, quick } = btn.dataset;
     if (page) go(page);
+    else if (quick) quickAdd(quick);
+    else if (action === 'undo') undoQuick();
     else if (mode) {
       state.feeMode = mode;
       saveState();
@@ -673,7 +756,12 @@
   });
   view.addEventListener('keydown', e => {
     // 変換を確定するEnter（isComposing または keyCode 229）では欄を離れない
-    if (e.key === 'Enter' && !e.isComposing && e.keyCode !== 229 && e.target.matches('[data-num]')) e.target.blur();
+    if (e.key !== 'Enter' || e.isComposing || e.keyCode === 229 || !e.target.matches('[data-num]')) return;
+    // 件数の欄はEnterで次の欄へ進み、続けて打てるようにする
+    const counts = [...view.querySelectorAll('.count-input')];
+    const next = counts[counts.indexOf(e.target) + 1];
+    if (e.target.matches('.count-input') && next) next.focus();
+    else e.target.blur();
   });
 
   document.addEventListener('visibilitychange', () => {
