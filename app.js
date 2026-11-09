@@ -32,6 +32,8 @@
   const pct = n => n.toFixed(2) + '%';
   const card = (title, html) => `<section class="card"><h2>${title}</h2>${html}</section>`;
   const statLine = (label, value) => `<div class="statline"><span>${label}</span><b>${value}</b></div>`;
+  const minus = n => `− ${yen(n)}`;
+  const countText = n => `${n.toLocaleString('ja-JP')}件`;
 
   /* ---------- 数字の入力 ----------
    * type="number" は全角数字やカンマを受け付けず、入力途中の値が空になるため
@@ -285,21 +287,96 @@
   }
 
   /* ---------- 各画面 ---------- */
-  function homeView() {
-    const tiles = [
-      ['fee', '💴', '手取り計算機', '手数料を引く・価格を逆算'],
-      ['cancel', '📅', 'キャンセル率', '作業・キャンセル件数を管理'],
-      ['review', '⭐', '口コミ率', '作業・口コミ件数を管理'],
-      ['rating', '🌟', '星評価', '次の0.01まであと何件？'],
-    ];
+  const miniRow = (items, cls = '') => `<span class="minis ${cls}">${items.map(([label, value]) => `<span class="mini"><small>${label}</small><b>${value}</b></span>`).join('')}</span>`;
+
+  // ホームの1枚分。ボタンの中に置くので span だけで組む
+  function dashCard({ page, icon, title, label, value, note = '', rows }) {
     return `
+      <button type="button" class="dash-card" data-go="${page}">
+        <span class="dash-head"><span class="emoji">${icon}</span><strong>${title}</strong><span class="chev" aria-hidden="true">›</span></span>
+        <span class="dash-main"><small>${label}</small><b>${value}</b>${note ? `<small>${note}</small>` : ''}</span>
+        ${rows.join('')}
+      </button>`;
+  }
+
+  function feeDash() {
+    const res = feeResult();
+    const method = { base: '通常のみ', card: 'カード', ato: 'ATO' }[state.paymentMethod];
+    const settings = [['支払い方法', method], ['手数料率', `${state.feeRate}％`], ['最低手数料', yen(state.minimum)]];
+    let label = '手取り目安';
+    let value = '—';
+    let note = '金額を入力すると表示されます';
+    let figures = [];
+    if (res.hasAmount && !res.possible) {
+      label = '必要な請求金額';
+      value = '計算不可';
+      note = '';
+    } else if (res.hasAmount) {
+      const reverse = state.feeMode === 'reverse';
+      label = reverse ? '必要な請求金額（概算）' : '手取り目安';
+      value = yen(reverse ? res.invoice : res.net);
+      note = '';
+      figures = [[reverse ? '手取り目安' : '請求金額', yen(reverse ? res.net : res.invoice)], ['くらま手数料', minus(res.platform)]];
+      if (state.paymentMethod !== 'base') figures.push(['決済手数料', minus(res.payment + res.volume)]);
+      if (state.taxEnabled) figures.push(['納税用に確保', minus(res.reserve)]);
+    }
+    return dashCard({ page: 'fee', icon: '💴', title: '手取り計算機', label, value, note, rows: [miniRow([...figures, ...settings])] });
+  }
+
+  // 「今月」は対象年月の選択に関係なく、実際の今月を表示する
+  function monthDash(isCancel) {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = now.getMonth() + 1;
+    const key = isCancel ? 'cancel' : 'review';
+    const name = isCancel ? 'キャンセル' : '口コミ';
+    const d = CALC.monthCounts(state.months[ymKey(year, month)]);
+    const goal = state.goals[key];
+    const needed = CALC.neededForGoal(d, isCancel, goal);
+    const annual = CALC.yearSummary(state.months, year, isCancel);
+    return dashCard({
+      page: key,
+      icon: isCancel ? '📅' : '⭐',
+      title: `${name}率`,
+      label: `${month}月の${name}率`,
+      value: pct(CALC.monthRate(d, isCancel)),
+      note: needed === null ? '目標には到達できません' : `目標まで${isCancel ? 'キャンセルなし作業' : '口コミ付き作業'} あと${countText(needed)}`,
+      rows: [
+        miniRow([['作業件数', countText(d.work)], [`${name}件数`, countText(d[key])], ['目標', `${goal}％`]]),
+        miniRow([[`${year}年の率`, pct(annual.rate)], ['年間の作業', countText(annual.work)], [`年間の${name}`, countText(annual[key])]]),
+      ],
+    });
+  }
+
+  function ratingDash() {
+    const { n, avg, shown, next, needed } = CALC.ratingStats(state.rating);
+    const note = n === 0 ? '件数を入力すると表示されます'
+      : shown >= 5 ? '最高評価です'
+        : needed === null ? '次の0.01には到達できません'
+          : `次の0.01アップまで ★5 あと${countText(needed)}`;
+    return dashCard({
+      page: 'rating',
+      icon: '🌟',
+      title: '星評価',
+      label: '平均評価',
+      value: n ? shown.toFixed(2) : '—',
+      note,
+      rows: [
+        miniRow([['口コミ合計', countText(n)], ['実際の平均', n ? avg.toFixed(5) : '—'], ['次の評価', n && shown < 5 ? next.toFixed(2) : '—']]),
+        miniRow([5, 4, 3, 2, 1].map(star => [`★${star}`, state.rating[star - 1].toLocaleString('ja-JP')]), 'five'),
+      ],
+    });
+  }
+
+  function homeView() {
+    return `
+      <div class="dash">${feeDash()}${monthDash(true)}${monthDash(false)}${ratingDash()}</div>
+      <p class="hint">カードをタップすると入力画面が開きます。数字はこの端末に保存されます。売上金額は計算だけで履歴に残さず、ページを閉じると消えます。</p>
       ${card('はじめて使う方へ', `
         <p><strong>LINE内のブラウザではなく、Safari・Chromeなどで開いてください。</strong></p>
         <p>① LINEのメニューから「ブラウザで開く」<br>② 通常のブラウザでこのページを開く<br>③ ホーム画面に追加して使うと便利です</p>
         <p class="hint">iPhone：Safariの共有メニュー →「ホーム画面に追加」<br>Android：Chromeのメニュー →「ホーム画面に追加」</p>
-        <p class="hint">記録は使用するブラウザ・端末ごとに保存されます。別のブラウザに切り替えると記録は引き継がれません。</p>`)}
-      <div class="grid">${tiles.map(([id, icon, name, desc]) => `<button type="button" class="tile" data-go="${id}"><span class="emoji">${icon}</span><strong>${name}</strong><small>${desc}</small></button>`).join('')}</div>
-      <p class="hint">数字はこの端末に保存。売上金額は計算だけで履歴に残しません。</p>`;
+        <p class="hint">記録は使用するブラウザ・端末ごとに保存されます。別のブラウザに切り替えると記録は引き継がれません。</p>`)}`;
   }
 
   function switchButtons(attr, options, current) {
@@ -339,25 +416,29 @@
       <div id="fee-out"></div>`;
   }
 
-  function feeOut() {
-    const params = {
+  function feeResult() {
+    return CALC.computeFee({
+      mode: state.feeMode,
+      amount: Number(feeAmount) || 0,
       rate: state.feeRate,
       minimum: state.minimum,
       method: state.paymentMethod,
       taxRate: state.taxEnabled ? state.taxReserveRate : 0,
-    };
-    const res = CALC.computeFee({ mode: state.feeMode, amount: Number(feeAmount) || 0, ...params });
+    });
+  }
+
+  function feeOut() {
+    const res = feeResult();
     if (!res.hasAmount) return card('計算結果', '<p class="hint">金額を入力すると計算結果が表示されます。</p>');
     if (!res.possible) {
       return card('計算結果', '<div class="result"><small>必要な請求金額（概算）</small><strong>計算不可</strong><p>今の手数料率などの設定では、希望する手取り額を確保できません。</p></div>');
     }
     const reverse = state.feeMode === 'reverse';
-    const minus = n => `− ${yen(n)}`;
     const lines = [statLine('請求金額', yen(res.invoice)), statLine('くらま手数料（税込・概算）', minus(res.platform))];
-    if (params.method === 'card') {
+    if (state.paymentMethod === 'card') {
       lines.push(statLine('カード決済手数料（税込・概算）', minus(res.payment)));
       lines.push(statLine('Stripe Connect費用（税込・概算）', minus(res.volume)));
-    } else if (params.method === 'ato') {
+    } else if (state.paymentMethod === 'ato') {
       lines.push(statLine('ATO決済手数料（概算）', minus(res.payment)));
     }
     lines.push(statLine('各種手数料差引後', yen(res.invoice - res.platform - res.payment - res.volume)));
