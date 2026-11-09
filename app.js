@@ -1,9 +1,9 @@
-/* くらま出店者の計算機：画面まわり（計算ロジックは calc.js） */
+/* クラマ出店者計算アプリ：画面まわり（計算ロジックは calc.js） */
 (() => {
   'use strict';
 
   const CALC = window.Calc;
-  const APP_TITLE = 'くらま出店者の計算機';
+  const APP_TITLE = 'クラマ出店者計算アプリ';
   const APP_ID = 'merchant-calculators';
   const KEY = 'merchant_calcs_v1';
   const RESUME_MS = 30 * 60 * 1000; // 30分以上離れたらホームに戻る
@@ -662,7 +662,7 @@
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `出店者の計算機_${new Date().toISOString().slice(0, 10)}.json`;
+    a.download = `${APP_TITLE}_${new Date().toISOString().slice(0, 10)}.json`;
     document.body.appendChild(a);
     a.click();
     a.remove();
